@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alerta Familiar - MVP</title>
+    <!-- EmailJS SDK -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -19,6 +21,7 @@
             align-items: center;
             justify-content: center;
             color: white;
+            overflow-x: hidden;
         }
 
         .container {
@@ -29,7 +32,7 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
+            max-width: 450px;
             width: 90%;
         }
 
@@ -72,6 +75,12 @@
             transform: translateY(-1px);
         }
 
+        .emergency-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .status {
             margin-top: 1rem;
             padding: 1rem;
@@ -79,6 +88,7 @@
             font-weight: bold;
             opacity: 0;
             transition: all 0.3s ease;
+            font-size: 0.9rem;
         }
 
         .status.show {
@@ -95,6 +105,12 @@
             background: rgba(255, 193, 7, 0.2);
             border: 1px solid rgba(255, 193, 7, 0.5);
             color: #fff3c4;
+        }
+
+        .status.error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            color: #ffcdd2;
         }
 
         .family-list {
@@ -118,10 +134,22 @@
             height: 12px;
             border-radius: 50%;
             background: #666;
+            transition: all 0.3s ease;
         }
 
         .status-icon.sent {
             background: #4caf50;
+        }
+
+        .status-icon.sending {
+            background: #ff9800;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
         }
 
         .countdown {
@@ -129,6 +157,7 @@
             font-weight: bold;
             margin: 1rem 0;
             color: #ff6b6b;
+            text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
         }
 
         .cancel-btn {
@@ -145,14 +174,47 @@
         .cancel-btn:hover {
             background: rgba(255, 255, 255, 0.3);
         }
+
+        .user-info {
+            margin-bottom: 1.5rem;
+        }
+
+        .user-info input {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 0.5rem;
+            border-radius: 8px;
+            margin: 0.2rem;
+            width: calc(50% - 0.4rem);
+            text-align: center;
+        }
+
+        .user-info input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .location-info {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.5rem;
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚨 Alerta Familiar</h1>
-        <p class="subtitle">Sistema de emergencia para tu familia</p>
+        <p class="subtitle">Sistema de emergencia con email real</p>
         
-        <button class="emergency-btn" onclick="sendAlert()">
+        <div class="user-info">
+            <input type="text" id="userName" placeholder="Tu nombre" value="Usuario">
+            <input type="email" id="userEmail" placeholder="Tu email">
+        </div>
+
+        <button class="emergency-btn" onclick="sendAlert()" id="emergencyBtn">
             🆘 ENVIAR ALERTA
         </button>
 
@@ -164,31 +226,75 @@
         <div id="status" class="status"></div>
 
         <div class="family-list">
-            <h3 style="margin-bottom: 1rem;">👨‍👩‍👧‍👦 Familia Registrada:</h3>
+            <h3 style="margin-bottom: 1rem;">👨‍👩‍👧‍👦 Contactos de Emergencia:</h3>
             <div class="family-member">
-                <span>📱 Mamá</span>
-                <div class="status-icon" id="status-mama"></div>
+                <span>📧 Email de emergencia</span>
+                <div class="status-icon" id="status-email"></div>
             </div>
             <div class="family-member">
-                <span>📱 Papá</span>
-                <div class="status-icon" id="status-papa"></div>
+                <span>📍 Ubicación GPS</span>
+                <div class="status-icon" id="status-location"></div>
             </div>
             <div class="family-member">
-                <span>📱 Hermana</span>
-                <div class="status-icon" id="status-hermana"></div>
+                <span>⏰ Timestamp</span>
+                <div class="status-icon" id="status-time"></div>
             </div>
+        </div>
+
+        <div id="locationInfo" class="location-info" style="display: none;">
+            <div>📍 <span id="locationText">Obteniendo ubicación...</span></div>
         </div>
     </div>
 
     <script>
+        // Inicializar EmailJS
+        (function(){
+            emailjs.init({
+                publicKey: "Khoe6SJmBeo0PASgt",
+            });
+        })();
+
         let alertTimeout;
         let countdownInterval;
         let isAlertActive = false;
+        let userLocation = null;
+
+        // Obtener ubicación al cargar la página
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    userLocation = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                        accuracy: position.coords.accuracy
+                    };
+                    
+                    const locationText = `${userLocation.lat.toFixed(6)}, ${userLocation.lng.toFixed(6)}`;
+                    document.getElementById('locationText').textContent = `Ubicación obtenida: ${locationText}`;
+                    document.getElementById('locationInfo').style.display = 'block';
+                    document.getElementById('status-location').classList.add('sent');
+                },
+                function(error) {
+                    console.log('Error obteniendo ubicación:', error);
+                    document.getElementById('locationText').textContent = 'No se pudo obtener la ubicación';
+                    document.getElementById('locationInfo').style.display = 'block';
+                }
+            );
+        }
 
         function sendAlert() {
             if (isAlertActive) return;
             
+            const userName = document.getElementById('userName').value || 'Usuario';
+            const userEmail = document.getElementById('userEmail').value;
+            
+            if (!userEmail) {
+                showStatus('error', '❌ Por favor ingresa tu email para enviar la alerta');
+                return;
+            }
+            
             isAlertActive = true;
+            document.getElementById('emergencyBtn').disabled = true;
             
             // Mostrar countdown de 5 segundos
             let timeLeft = 5;
@@ -198,8 +304,7 @@
             
             countdownEl.style.display = 'block';
             cancelBtn.style.display = 'block';
-            statusEl.className = 'status sending show';
-            statusEl.textContent = '⏳ Enviando alerta en...';
+            showStatus('sending', '⏳ Enviando alerta en...');
             
             countdownInterval = setInterval(() => {
                 countdownEl.textContent = timeLeft;
@@ -207,7 +312,7 @@
                 
                 if (timeLeft < 0) {
                     clearInterval(countdownInterval);
-                    executeAlert();
+                    executeAlert(userName, userEmail);
                 }
             }, 1000);
             
@@ -220,60 +325,92 @@
             
             document.getElementById('countdown').style.display = 'none';
             document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('emergencyBtn').disabled = false;
             
-            const statusEl = document.getElementById('status');
-            statusEl.className = 'status';
-            statusEl.textContent = '';
+            showStatus('', '');
             
-            // Resetear iconos
-            document.querySelectorAll('.status-icon').forEach(icon => {
-                icon.classList.remove('sent');
-            });
+            // Resetear iconos excepto ubicación
+            document.getElementById('status-email').classList.remove('sent', 'sending');
+            document.getElementById('status-time').classList.remove('sent', 'sending');
             
             isAlertActive = false;
         }
 
-        function executeAlert() {
+        function executeAlert(userName, userEmail) {
             document.getElementById('countdown').style.display = 'none';
             document.getElementById('cancelBtn').style.display = 'none';
             
-            const statusEl = document.getElementById('status');
-            statusEl.className = 'status sending show';
-            statusEl.textContent = '📤 Enviando alertas...';
+            showStatus('sending', '📤 Enviando alerta de emergencia...');
             
-            // Simular envío de mensajes con delay
-            const family = ['mama', 'papa', 'hermana'];
-            let sent = 0;
+            // Marcar timestamp
+            document.getElementById('status-time').classList.add('sent');
             
-            family.forEach((member, index) => {
-                setTimeout(() => {
-                    document.getElementById(`status-${member}`).classList.add('sent');
-                    sent++;
+            // Marcar email como enviando
+            document.getElementById('status-email').classList.add('sending');
+            
+            // Preparar datos para el email
+            const now = new Date();
+            const templateParams = {
+                user_name: userName,
+                user_email: userEmail,
+                date: now.toLocaleDateString('es-ES'),
+                time: now.toLocaleTimeString('es-ES'),
+                location: userLocation ? 
+                    `https://maps.google.com/?q=${userLocation.lat},${userLocation.lng} (Precisión: ${Math.round(userLocation.accuracy)}m)` : 
+                    'Ubicación no disponible'
+            };
+
+            // Enviar email usando EmailJS
+            emailjs.send('service_k8ctd6h', 'template_0h5rhbh', templateParams)
+                .then(function(response) {
+                    console.log('Email enviado correctamente:', response.status, response.text);
                     
-                    if (sent === family.length) {
-                        statusEl.className = 'status success show';
-                        statusEl.innerHTML = '✅ ¡Alerta enviada a toda la familia!<br>📱 SMS enviados<br>📧 Emails enviados<br>📍 Ubicación compartida';
-                        
-                        // Resetear después de 5 segundos
-                        setTimeout(() => {
-                            statusEl.className = 'status';
-                            statusEl.textContent = '';
-                            document.querySelectorAll('.status-icon').forEach(icon => {
-                                icon.classList.remove('sent');
-                            });
-                            isAlertActive = false;
-                        }, 5000);
-                    }
-                }, (index + 1) * 1000);
-            });
+                    document.getElementById('status-email').classList.remove('sending');
+                    document.getElementById('status-email').classList.add('sent');
+                    
+                    showStatus('success', `✅ ¡Alerta enviada correctamente!<br>📧 Email enviado a: ${userEmail}<br>📍 Ubicación incluida<br>⏰ ${now.toLocaleString('es-ES')}`);
+                    
+                    // Resetear después de 8 segundos
+                    setTimeout(() => {
+                        showStatus('', '');
+                        document.getElementById('status-email').classList.remove('sent');
+                        document.getElementById('status-time').classList.remove('sent');
+                        document.getElementById('emergencyBtn').disabled = false;
+                        isAlertActive = false;
+                    }, 8000);
+                })
+                .catch(function(error) {
+                    console.error('Error enviando email:', error);
+                    
+                    document.getElementById('status-email').classList.remove('sending');
+                    
+                    showStatus('error', `❌ Error enviando la alerta:<br>${error.text || 'Error desconocido'}<br>Inténtalo de nuevo`);
+                    
+                    setTimeout(() => {
+                        showStatus('', '');
+                        document.getElementById('emergencyBtn').disabled = false;
+                        isAlertActive = false;
+                    }, 5000);
+                });
         }
 
-        // Simular ubicación
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(function(position) {
-                console.log('Ubicación obtenida:', position.coords.latitude, position.coords.longitude);
-            });
+        function showStatus(type, message) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = `status ${type}`;
+            statusEl.innerHTML = message;
+            
+            if (type) {
+                statusEl.classList.add('show');
+            } else {
+                statusEl.classList.remove('show');
+            }
         }
+
+        // Auto-completar email si es posible
+        document.addEventListener('DOMContentLoaded', function() {
+            // Puedes pre-llenar con un email de prueba
+            // document.getElementById('userEmail').value = 'tu-email@ejemplo.com';
+        });
     </script>
 </body>
 </html>
